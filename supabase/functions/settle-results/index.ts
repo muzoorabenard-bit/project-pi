@@ -3,19 +3,23 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const FOOTBALL_DATA_KEY = Deno.env.get('FOOTBALL_DATA_KEY')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-// Same bot/chat analyze-matches already sends "Daily Picks" to (project-wide
-// Supabase secrets — no new secrets needed here). Optional: silently no-ops
-// if unset, same reasoning as ai-bet-ug's notify/telegram.ts — a settlement
+// Dedicated bot for ai-bet-ug/project-pi betting notifications only.
+// Deliberately NOT named TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID — this Supabase
+// project is shared with project-lydia (telegram-webhook, sms-ingest,
+// lydia-meeting), which already owns those names for its own, unrelated
+// Telegram bot. Reusing them once already silently redirected/broke Lydia's
+// bot on 2026-08-16 — this is the fix. Optional: silently no-ops if unset,
+// same reasoning as ai-bet-ug's notify/telegram.ts — a settlement
 // notification must never be why settlement itself fails.
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')
-const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID')
+const AI_BET_TELEGRAM_BOT_TOKEN = Deno.env.get('AI_BET_TELEGRAM_BOT_TOKEN')
+const AI_BET_TELEGRAM_CHAT_ID = Deno.env.get('AI_BET_TELEGRAM_CHAT_ID')
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 async function notifyTelegram(text: string): Promise<void> {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return
+  if (!AI_BET_TELEGRAM_BOT_TOKEN || !AI_BET_TELEGRAM_CHAT_ID) return
   try {
-    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${AI_BET_TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
