@@ -6,9 +6,38 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!
 const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!
 const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID')!
+// Same dedicated ops bot settle-results uses (deliberately NOT the
+// TELEGRAM_BOT_TOKEN/CHAT_ID pair above, which is project-lydia's shared
+// bot — see settle-results/index.ts for why). Operational failure alerts,
+// not customer-facing picks.
+const AI_BET_TELEGRAM_BOT_TOKEN = Deno.env.get('AI_BET_TELEGRAM_BOT_TOKEN')
+const AI_BET_TELEGRAM_CHAT_ID = Deno.env.get('AI_BET_TELEGRAM_CHAT_ID')
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
+
+// Best-effort — an alerting failure must never be why the run itself fails.
+async function notifyOps(text: string): Promise<void> {
+  if (!AI_BET_TELEGRAM_BOT_TOKEN || !AI_BET_TELEGRAM_CHAT_ID) return
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${AI_BET_TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: AI_BET_TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    })
+    if (!res.ok) console.error(`ops notification failed: ${res.status} ${await res.text()}`)
+  } catch (err) {
+    console.error(`ops notification threw: ${err}`)
+  }
+}
+
+// Credit/billing exhaustion is a real, previously-seen failure mode — it
+// silently stalled this exact function for ~3 months (2026-05-11 to
+// 2026-08-15) before anyone noticed. Flag it distinctly so it's obvious
+// what to check first.
+function looksLikeBillingFailure(errorText: string): boolean {
+  return /credit balance|insufficient_quota|billing|429/i.test(errorText)
+}
 
 interface TeamStats {
   form: string
@@ -486,12 +515,25 @@ Deno.serve(async (req) => {
       await sendTelegram(formatOnePick(telegramRecs[i], i + 1, telegramRecs.length))
     }
 
+    if (failures.length > 0) {
+      const sample = failures.slice(0, 3).map((f) => `${f.match}: ${f.error}`).join('\n')
+      const billingSuspected = failures.some((f) => looksLikeBillingFailure(f.error))
+      await notifyOps(
+        `${billingSuspected ? '💰 Possible Anthropic credit/billing issue' : '⚠️'} analyze-matches: ${failures.length}/${toAnalyze.length} matches failed\n\n${sample}` +
+          (failures.length > 3 ? `\n...and ${failures.length - 3} more` : ''),
+      )
+    }
+
     return new Response(
       JSON.stringify({ ok: true, analyzed: telegramRecs.length, failures }),
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    const errorText = String(err)
+    await notifyOps(
+      `${looksLikeBillingFailure(errorText) ? '💰 Possible Anthropic credit/billing issue' : '🛑'} analyze-matches crashed entirely\n${errorText}`,
+    )
+    return new Response(JSON.stringify({ error: errorText }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })

@@ -22,7 +22,7 @@ async function notifyTelegram(text: string): Promise<void> {
     const res = await fetch(`https://api.telegram.org/bot${AI_BET_TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+      body: JSON.stringify({ chat_id: AI_BET_TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
     })
     if (!res.ok) console.error(`telegram notification failed: ${res.status} ${await res.text()}`)
   } catch (err) {
@@ -336,12 +336,23 @@ Deno.serve(async () => {
     const phase2 = await settleRecommendations()
     const phase3 = await settleBetPlacements()
 
+    const totalFailures = phase1.failures.length + phase2.failures.length + phase3.failures.length
+    if (totalFailures > 0) {
+      await notifyTelegram(
+        `⚠️ settle-results: ${totalFailures} item(s) failed to settle\n` +
+          `phase1 (results): ${phase1.failures.length} | phase2 (recommendations): ${phase2.failures.length} | phase3 (bet_placements): ${phase3.failures.length}\n` +
+          `Self-heals next hourly run if transient — check logs if it persists.`,
+      )
+    }
+
     return new Response(
       JSON.stringify({ ok: true, phase1, phase2, phase3 }),
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    const errorText = String(err)
+    await notifyTelegram(`🛑 settle-results crashed entirely\n${errorText}`)
+    return new Response(JSON.stringify({ error: errorText }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })

@@ -4,8 +4,27 @@ const FOOTBALL_DATA_KEY = Deno.env.get('FOOTBALL_DATA_KEY')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ANALYZE_URL = `${SUPABASE_URL}/functions/v1/analyze-matches`
+// Same dedicated ops bot as analyze-matches/settle-results — see
+// settle-results/index.ts for why this is a distinct pair from
+// TELEGRAM_BOT_TOKEN/CHAT_ID (project-lydia's shared bot).
+const AI_BET_TELEGRAM_BOT_TOKEN = Deno.env.get('AI_BET_TELEGRAM_BOT_TOKEN')
+const AI_BET_TELEGRAM_CHAT_ID = Deno.env.get('AI_BET_TELEGRAM_CHAT_ID')
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+async function notifyOps(text: string): Promise<void> {
+  if (!AI_BET_TELEGRAM_BOT_TOKEN || !AI_BET_TELEGRAM_CHAT_ID) return
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${AI_BET_TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: AI_BET_TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    })
+    if (!res.ok) console.error(`ops notification failed: ${res.status} ${await res.text()}`)
+  } catch (err) {
+    console.error(`ops notification threw: ${err}`)
+  }
+}
 
 const COMPETITION_MAP: Record<string, string> = {
   PL:  'EPL',
@@ -258,7 +277,9 @@ Deno.serve(async () => {
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    const errorText = String(err)
+    await notifyOps(`🛑 fetch-fixtures crashed entirely\n${errorText}`)
+    return new Response(JSON.stringify({ error: errorText }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })
