@@ -3,8 +3,28 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const FOOTBALL_DATA_KEY = Deno.env.get('FOOTBALL_DATA_KEY')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+// Same bot/chat analyze-matches already sends "Daily Picks" to (project-wide
+// Supabase secrets — no new secrets needed here). Optional: silently no-ops
+// if unset, same reasoning as ai-bet-ug's notify/telegram.ts — a settlement
+// notification must never be why settlement itself fails.
+const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')
+const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID')
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+async function notifyTelegram(text: string): Promise<void> {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    })
+    if (!res.ok) console.error(`telegram notification failed: ${res.status} ${await res.text()}`)
+  } catch (err) {
+    console.error(`telegram notification threw: ${err}`)
+  }
+}
 
 const COMPETITION_CODES = ['PL', 'PD', 'BL1', 'SA', 'FL1']
 const RESOLVED_STATUSES = ['finished', 'postponed', 'cancelled']
@@ -211,13 +231,14 @@ async function settleBetPlacements(): Promise<{ settled: number; failures: { id:
   const recBetIds = [...new Set(pendingPlacements.map((p: { recommended_bet_id: number }) => p.recommended_bet_id))]
   const { data: recBets, error: recBetErr } = await supabase
     .from('recommended_bets')
-    .select('id, market, selection, pi_match_id')
+    .select('id, market, selection, pi_match_id, home_team, away_team, league')
     .in('id', recBetIds)
     .not('pi_match_id', 'is', null)
 
   if (recBetErr) throw recBetErr
-  const recBetById = new Map<number, { market: string; selection: string; pi_match_id: string }>(
-    (recBets ?? []).map((r: { id: number; market: string; selection: string; pi_match_id: string }) => [r.id, r]),
+  type RecBetRow = { id: number; market: string; selection: string; pi_match_id: string; home_team: string; away_team: string; league: string }
+  const recBetById = new Map<number, RecBetRow>(
+    (recBets ?? []).map((r: RecBetRow) => [r.id, r]),
   )
 
   const matchIds = [...new Set([...recBetById.values()].map((r) => r.pi_match_id))]
@@ -242,17 +263,23 @@ async function settleBetPlacements(): Promise<{ settled: number; failures: { id:
     if (!match) continue // not resolved yet — retried next run
 
     try {
+      const matchLabel = `${recBet.league}: ${recBet.home_team} vs ${recBet.away_team}`
+
       if (match.status !== 'finished') {
         await supabase
           .from('bet_placements')
           .update({ result: 'void', payout: placement.stake_placed, settled_at: new Date().toISOString() })
           .eq('id', placement.id)
-        await supabase.rpc('append_bankroll_entry', {
+        const { data: newBalance } = await supabase.rpc('append_bankroll_entry', {
           p_change: placement.stake_placed,
           p_reason: 'settled_void',
           p_bet_placement_id: placement.id,
           p_notes: 'Match postponed/cancelled — stake refunded.',
         })
+        await notifyTelegram(
+          `↩️ VOID — refunded\n${matchLabel}\n${recBet.market} — ${recBet.selection}\n` +
+            `Stake ${placement.stake_placed} refunded. Bankroll: ${newBalance} UGX`,
+        )
       } else {
         const result = determineOutcomeForBet(recBet.market, recBet.selection, match.home_score!, match.away_score!)
         const payout = result === 'win' ? placement.stake_placed * placement.submitted_odds : 0
@@ -263,22 +290,30 @@ async function settleBetPlacements(): Promise<{ settled: number; failures: { id:
           .eq('id', placement.id)
 
         if (result === 'win') {
-          await supabase.rpc('append_bankroll_entry', {
+          const { data: newBalance } = await supabase.rpc('append_bankroll_entry', {
             p_change: payout,
             p_reason: 'settled_win',
             p_bet_placement_id: placement.id,
             p_notes: `${recBet.market}/${recBet.selection} — won.`,
           })
+          await notifyTelegram(
+            `🎉 WON — ${match.home_score}-${match.away_score}\n${matchLabel}\n${recBet.market} — ${recBet.selection} @ ${placement.submitted_odds}\n` +
+              `Stake ${placement.stake_placed} → Payout ${payout}. Bankroll: ${newBalance} UGX`,
+          )
         } else {
           // Zero-amount entry: the stake already left the bankroll at
           // placement time. This exists purely to mark the loss for
           // history/audit/future calibration, not to move money again.
-          await supabase.rpc('append_bankroll_entry', {
+          const { data: newBalance } = await supabase.rpc('append_bankroll_entry', {
             p_change: 0,
             p_reason: 'settled_loss',
             p_bet_placement_id: placement.id,
             p_notes: `${recBet.market}/${recBet.selection} — lost.`,
           })
+          await notifyTelegram(
+            `❌ LOST — ${match.home_score}-${match.away_score}\n${matchLabel}\n${recBet.market} — ${recBet.selection} @ ${placement.submitted_odds}\n` +
+              `Stake ${placement.stake_placed} lost. Bankroll: ${newBalance} UGX`,
+          )
         }
       }
       settled++
