@@ -142,10 +142,10 @@ function mapToBetPawaMarket(
       return pick === 'btts_yes'
         ? { market: 'BTTS', selection: 'Yes', modelProb: probs.pBTTS }
         : { market: 'BTTS', selection: 'No', modelProb: 1 - probs.pBTTS }
-    // 'over_2.5'/'under_2.5' deliberately absent — retired from auto-placement
-    // (too risky per operator call); falls through to null below, same as
-    // draw_no_bet, so any stray Claude pick still lands in `recommendations`
-    // but never bridges into recommended_bets/auto-placement.
+    case 'over_2.5':
+      return { market: 'Over/Under 2.5', selection: 'Over 2.5', modelProb: probs.pOver25 }
+    case 'under_2.5':
+      return { market: 'Over/Under 2.5', selection: 'Under 2.5', modelProb: 1 - probs.pOver25 }
     default:
       return null
   }
@@ -240,31 +240,31 @@ P(Over 2.5): ${payload.pressure.pOvers}% | P(Under 2.5): ${payload.pressure.pUnd
 Home: ${payload.odds.home ?? 'N/A'} | Draw: ${payload.odds.draw ?? 'N/A'} | Away: ${payload.odds.away ?? 'N/A'}
 
 ═══ BET TYPE GUIDANCE ═══
-Eligible 1X2 market: ${payload.betGuidance.eligible1x2 ? 'YES' : 'NO — must pick btts'}
+Eligible 1X2 market: ${payload.betGuidance.eligible1x2 ? 'YES' : 'NO — must pick btts, over_2.5, or under_2.5'}
 Suggested type: ${payload.betGuidance.suggestedType}
 Favored side: ${payload.betGuidance.favoredSide}
 
 RULES YOU MUST FOLLOW:
-- eligible 1X2 = NO → bet_type must be "btts"
+- eligible 1X2 = NO → bet_type must be "btts", "over_2.5", or "under_2.5"
 - suggested "win" → bet_type: "win", pick: "${payload.betGuidance.favoredSide}_win"
 - suggested "draw_no_bet" → bet_type: "draw_no_bet", pick: "${payload.betGuidance.favoredSide}_dnb"
 - suggested "double_chance" → bet_type: "double_chance", pick: "${payload.betGuidance.favoredSide}_or_draw"
 - For BTTS: bet_type: "btts", pick: "btts_yes" or "btts_no"
-- Totals (over/under 2.5) are retired — never pick "over_2.5" or "under_2.5", regardless of what the models below suggest
+- For totals: bet_type: "over_2.5" or "under_2.5", pick same as bet_type
 - You may deviate from the suggested type if reasoning clearly supports it, but you MUST use the allowed values
 
 INSTRUCTIONS:
 1. Start with match narrative — what's at stake changes everything
 2. Check draw trap signals — if active, lean away from Draw picks
 3. Check away team reliability — if ≤1 away win in 6, they are unlikely to win here
-4. Use pressure + Poisson total-goals signals as supporting context for BTTS likelihood (higher expected total goals generally favors BTTS Yes)
+4. Use pressure + Poisson models together for over/under
 5. Clean sheet streaks reduce BTTS likelihood
 6. Smart money (low odds) often reflects informed market view
 
 Respond with ONLY valid JSON (no markdown):
 {
-  "bet_type": "win" | "draw_no_bet" | "double_chance" | "btts",
-  "pick": "home_win" | "away_win" | "home_dnb" | "away_dnb" | "home_or_draw" | "away_or_draw" | "btts_yes" | "btts_no",
+  "bet_type": "win" | "draw_no_bet" | "double_chance" | "btts" | "over_2.5" | "under_2.5",
+  "pick": "home_win" | "away_win" | "home_dnb" | "away_dnb" | "home_or_draw" | "away_or_draw" | "btts_yes" | "btts_no" | "over_2.5" | "under_2.5",
   "confidence": "High" | "Medium" | "Low",
   "reasoning": "3-4 sentences referencing the key signals that drove this pick."
 }`
