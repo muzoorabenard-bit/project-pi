@@ -131,7 +131,20 @@ async function fetchAndUpdateResults(): Promise<{ updated: number; failures: { f
   const dateTo = new Date().toISOString().slice(0, 10)
   const codes = COMPETITION_CODES.join(',')
 
-  const response = await fd(`matches?dateFrom=${dateFrom}&dateTo=${dateTo}&competitions=${codes}`)
+  // This single batched call is the one part of phase 1 not already inside
+  // the per-match try/catch below — a transient network failure here (seen
+  // 2026-08-17: "connection closed before message completed") used to
+  // propagate all the way up and crash phases 2 and 3 too, instead of just
+  // costing this one hourly run. Contained here so a football-data.org
+  // hiccup only ever costs phase 1 — phases 2/3 (settling recommendations
+  // and real-money bet_placements) still run normally against whatever
+  // match data already exists from previous successful runs.
+  let response: { matches?: unknown[] }
+  try {
+    response = await fd(`matches?dateFrom=${dateFrom}&dateTo=${dateTo}&competitions=${codes}`)
+  } catch (err) {
+    return { updated: 0, failures: [{ fixtureId: -1, error: `batched fetch failed: ${err}` }] }
+  }
   const byFixtureId = new Map<number, { status: string; score: { fullTime: { home: number | null; away: number | null } } }>(
     (response.matches ?? []).map((m: { id: number; status: string; score: { fullTime: { home: number | null; away: number | null } } }) => [m.id, m]),
   )
