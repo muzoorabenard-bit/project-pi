@@ -4,12 +4,10 @@ import Anthropic from 'https://esm.sh/@anthropic-ai/sdk@0.36.3'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!
-const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID')!
-// Same dedicated ops bot settle-results uses (deliberately NOT the
-// TELEGRAM_BOT_TOKEN/CHAT_ID pair above, which is project-lydia's shared
-// bot — see settle-results/index.ts for why). Operational failure alerts,
-// not customer-facing picks.
+// Dedicated bot for all project-pi/ai-bet-ug Telegram traffic (Daily Picks,
+// ops alerts). Deliberately NOT TELEGRAM_BOT_TOKEN/CHAT_ID — those belong to
+// project-lydia's own, unrelated bot on this shared Supabase project; see
+// settle-results/index.ts for the incident that established this rule.
 const AI_BET_TELEGRAM_BOT_TOKEN = Deno.env.get('AI_BET_TELEGRAM_BOT_TOKEN')
 const AI_BET_TELEGRAM_CHAT_ID = Deno.env.get('AI_BET_TELEGRAM_CHAT_ID')
 
@@ -343,10 +341,15 @@ function formatOnePick(
 }
 
 async function sendTelegram(text: string) {
-  const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  // As of 2026-08-17: moved onto the dedicated AI Bet UG Alerts bot,
+  // same as ops alerts/settlement. Previously used TELEGRAM_BOT_TOKEN/
+  // TELEGRAM_CHAT_ID — project-lydia's shared bot — which was never meant
+  // to carry Daily Picks traffic; that was a leftover from before this
+  // project had its own bot.
+  const res = await fetch(`https://api.telegram.org/bot${AI_BET_TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
+    body: JSON.stringify({ chat_id: AI_BET_TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' }),
   })
   if (!res.ok) {
     const err = await res.text()
