@@ -34,12 +34,26 @@ const COMPETITION_MAP: Record<string, string> = {
   FL1: 'Ligue 1',
 }
 
-async function fd(endpoint: string) {
-  const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
-    headers: { 'X-Auth-Token': FOOTBALL_DATA_KEY },
-  })
-  if (!res.ok) throw new Error(`football-data.org ${res.status}: ${await res.text()}`)
-  return res.json()
+// Retries transport-level failures (connection reset, closed before
+// complete — seen live 2026-08-17, twice back to back) with a short
+// backoff. Does NOT retry a real HTTP error response (4xx/5xx) — those are
+// unlikely to be fixed by trying again and failing fast surfaces a genuine
+// API/key problem faster.
+// deno-lint-ignore no-explicit-any
+async function fd(endpoint: string): Promise<any> {
+  const attempts = 3
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
+        headers: { 'X-Auth-Token': FOOTBALL_DATA_KEY },
+      })
+      if (!res.ok) throw new Error(`football-data.org ${res.status}: ${await res.text()}`)
+      return await res.json()
+    } catch (err) {
+      if (attempt === attempts) throw err
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+    }
+  }
 }
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))

@@ -33,12 +33,26 @@ async function notifyTelegram(text: string): Promise<void> {
 const COMPETITION_CODES = ['PL', 'PD', 'BL1', 'SA', 'FL1']
 const RESOLVED_STATUSES = ['finished', 'postponed', 'cancelled']
 
-async function fd(endpoint: string) {
-  const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
-    headers: { 'X-Auth-Token': FOOTBALL_DATA_KEY },
-  })
-  if (!res.ok) throw new Error(`football-data.org ${res.status}: ${await res.text()}`)
-  return res.json()
+// Retries transport-level failures (connection reset, closed before
+// complete) with a short backoff — same pattern as fetch-fixtures'
+// identical helper, after the same class of transient error was seen live
+// against both functions on 2026-08-17. Does NOT retry a real HTTP error
+// response (4xx/5xx) — those are unlikely to be fixed by trying again.
+// deno-lint-ignore no-explicit-any
+async function fd(endpoint: string): Promise<any> {
+  const attempts = 3
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(`https://api.football-data.org/v4/${endpoint}`, {
+        headers: { 'X-Auth-Token': FOOTBALL_DATA_KEY },
+      })
+      if (!res.ok) throw new Error(`football-data.org ${res.status}: ${await res.text()}`)
+      return await res.json()
+    } catch (err) {
+      if (attempt === attempts) throw err
+      await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+    }
+  }
 }
 
 // ── Outcome logic ──────────────────────────────────────────────────────────
@@ -139,7 +153,8 @@ async function fetchAndUpdateResults(): Promise<{ updated: number; failures: { f
   // hiccup only ever costs phase 1 — phases 2/3 (settling recommendations
   // and real-money bet_placements) still run normally against whatever
   // match data already exists from previous successful runs.
-  let response: { matches?: unknown[] }
+  // deno-lint-ignore no-explicit-any
+  let response: { matches?: any[] }
   try {
     response = await fd(`matches?dateFrom=${dateFrom}&dateTo=${dateTo}&competitions=${codes}`)
   } catch (err) {
