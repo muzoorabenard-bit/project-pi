@@ -121,9 +121,14 @@ function classifyBetType(
 // ── ai-bet-ug bridge ──────────────────────────────────────────────────────────
 // Maps a Claude pick onto ai-bet-ug's recommended_bets market/selection
 // vocabulary, which mirrors what's actually clickable on BetPawa's match
-// page. Returns null for picks that don't have a confirmed BetPawa market
-// yet (currently: draw_no_bet) — those still land in `recommendations` as
-// before, they just don't get bridged into the auto-placement pipeline.
+// page. Returns null for any bet_type without a confirmed BetPawa mapping —
+// those still land in `recommendations` as before, they just don't get
+// bridged into the auto-placement pipeline.
+// draw_no_bet reinstated 2026-08-22 — confirmed via live recon that BetPawa
+// offers "Draw No Bet | Full Time" (labels "1"/"2", same numeric convention
+// as 1X2). modelProb here is P(win | not a draw) — Kelly needs the
+// probability conditional on the bet actually resolving, since a draw
+// voids/refunds rather than losing (see settle-results' determineOutcomeForBet).
 function mapToBetPawaMarket(
   betType: string,
   pick: string,
@@ -134,6 +139,12 @@ function mapToBetPawaMarket(
       return pick === 'home_win'
         ? { market: '1X2', selection: 'Home', modelProb: probs.pHome }
         : { market: '1X2', selection: 'Away', modelProb: probs.pAway }
+    case 'draw_no_bet': {
+      const pNotDraw = probs.pHome + probs.pAway
+      return pick === 'home_dnb'
+        ? { market: 'Draw No Bet', selection: 'Home', modelProb: pNotDraw > 0 ? probs.pHome / pNotDraw : 0.5 }
+        : { market: 'Draw No Bet', selection: 'Away', modelProb: pNotDraw > 0 ? probs.pAway / pNotDraw : 0.5 }
+    }
     case 'double_chance':
       return pick === 'home_or_draw'
         ? { market: 'Double Chance', selection: '1X', modelProb: probs.pHome + probs.pDraw }

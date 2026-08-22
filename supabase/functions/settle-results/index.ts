@@ -56,10 +56,11 @@ async function fd(endpoint: string): Promise<any> {
 }
 
 // ── Outcome logic ──────────────────────────────────────────────────────────
-// H/A = final home/away goals. ai-bet-ug's market vocabulary has no void
-// case (2.5 lines can't push, draw_no_bet never bridges through — see
-// mapToBetPawaMarket in analyze-matches/index.ts).
-function determineOutcomeForBet(market: string, selection: string, h: number, a: number): 'win' | 'loss' {
+// H/A = final home/away goals. Draw No Bet (reinstated 2026-08-22) is the
+// one genuine void/push case in ai-bet-ug's market vocabulary — a draw
+// refunds the stake rather than winning or losing. Every other market here
+// has no void case (2.5 lines can't push).
+function determineOutcomeForBet(market: string, selection: string, h: number, a: number): 'win' | 'loss' | 'void' {
   switch (market) {
     case '1X2':
       if (selection === 'Home') return h > a ? 'win' : 'loss'
@@ -78,6 +79,11 @@ function determineOutcomeForBet(market: string, selection: string, h: number, a:
     case 'Over/Under 2.5':
       if (selection === 'Over 2.5') return h + a >= 3 ? 'win' : 'loss'
       if (selection === 'Under 2.5') return h + a <= 2 ? 'win' : 'loss'
+      break
+    case 'Draw No Bet':
+      if (h === a) return 'void'
+      if (selection === 'Home') return h > a ? 'win' : 'loss'
+      if (selection === 'Away') return a > h ? 'win' : 'loss'
       break
   }
   throw new Error(`cannot determine outcome for market='${market}' selection='${selection}'`)
@@ -314,7 +320,10 @@ async function settleBetPlacements(): Promise<{ settled: number; failures: { id:
         )
       } else {
         const result = determineOutcomeForBet(recBet.market, recBet.selection, match.home_score!, match.away_score!)
-        const payout = result === 'win' ? placement.stake_placed * placement.submitted_odds : 0
+        // Draw No Bet's genuine push case (a draw) refunds the stake as its
+        // "payout"; every other market here only ever wins or loses.
+        const payout =
+          result === 'win' ? placement.stake_placed * placement.submitted_odds : result === 'void' ? placement.stake_placed : 0
 
         await supabase
           .from('bet_placements')
@@ -331,6 +340,17 @@ async function settleBetPlacements(): Promise<{ settled: number; failures: { id:
           await notifyTelegram(
             `🎉 WON — ${match.home_score}-${match.away_score}\n${matchLabel}\n${recBet.market} — ${recBet.selection} @ ${placement.submitted_odds}\n` +
               `Stake ${placement.stake_placed} → Payout ${payout}. Bankroll: ${newBalance} UGX`,
+          )
+        } else if (result === 'void') {
+          const { data: newBalance } = await supabase.rpc('append_bankroll_entry', {
+            p_change: payout,
+            p_reason: 'settled_void',
+            p_bet_placement_id: placement.id,
+            p_notes: `${recBet.market}/${recBet.selection} — draw, stake refunded.`,
+          })
+          await notifyTelegram(
+            `↩️ VOID (draw) — ${match.home_score}-${match.away_score}\n${matchLabel}\n${recBet.market} — ${recBet.selection}\n` +
+              `Stake ${placement.stake_placed} refunded. Bankroll: ${newBalance} UGX`,
           )
         } else {
           // Zero-amount entry: the stake already left the bankroll at
