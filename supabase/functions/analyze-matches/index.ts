@@ -479,9 +479,16 @@ Deno.serve(async (req) => {
         // bookmaker_event_url is left null here — resolving it needs a real
         // browser (BetPawa has no public API), which can't run in a Deno edge
         // function; ai-bet-ug's src/cli/resolveEvents.ts fills it in locally.
-        // Nothing here is auto-actionable: a human still has to flip
-        // status from pending_review to approved before ai-bet-ug's runner
-        // will ever touch it, independent of auto_execute/dry_run.
+        // 2026-09-15: dry_run changed from a hardcoded true to false — the
+        // status:'pending_review' + auto_execute:true below used to mean a
+        // human still had to flip status to 'approved' before anything
+        // could place, but that gate was removed in ai-bet-ug on 2026-08-16
+        // (resolveEvents.ts's autoApprove — see that repo's README). This
+        // hardcoded true was the last actual safety net left after that
+        // change and after today's other live-betting decisions; leaving it
+        // true would have silently kept every pick simulated regardless of
+        // settings.dry_run_default (processBet.ts ORs the two together, so
+        // a true here could never be overridden back to real).
         const mapped = mapToBetPawaMarket(claudeResult.bet_type, claudeResult.pick, {
           pHome, pDraw, pAway, pBTTS, pOver25,
         })
@@ -499,7 +506,7 @@ Deno.serve(async (req) => {
             edge_pct: null,
             recommended_stake: stakeForConfidence(claudeResult.confidence),
             auto_execute: true,
-            dry_run: true,
+            dry_run: false,
             source: 'project-pi',
             status: 'pending_review',
             bookmaker_event_url: null,
