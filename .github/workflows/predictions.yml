@@ -1,0 +1,40 @@
+name: Generate predictions
+
+# Phase 2 analytical engine, building toward a real backtest. Writes only to
+# feature_snapshots/predictions/betting_decisions/model_versions — never
+# touches recommendations/recommended_bets (analyze-matches' existing
+# single-pick production flow is untouched by this). No BetPawa automation
+# happens here at all (that's ai-bet-ug's capture-odds, a separate repo) —
+# this just reads matches/team_stats/bookmaker_odds_snapshots from Supabase
+# and runs pure TypeScript.
+#
+# Scheduled 55 minutes after ai-bet-ug's capture-odds (05:35 UTC) to give a
+# full matchday's worth of fixtures time to finish capturing real BetPawa
+# odds first — the two repos have no direct dependency signal between their
+# separate Actions workflows, so this is a generous fixed buffer rather than
+# a true "wait for" step, same pattern project-pi's own analyze-matches/
+# resolve-events timing already uses.
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate predictions for today's fixtures
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run predictions:generate
