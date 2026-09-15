@@ -58,7 +58,15 @@ interface TeamStats {
   gap_to_relegation: number | null
   gap_to_top4: number | null
   total_teams: number | null
+  games_played: number | null
 }
+
+// 2026-09-15: at 4-5 games into a 38-round season, a team 6-8 points off a
+// cutoff is one or two results from flipping entirely — that's standings
+// noise, not genuine relegation/title narrative. Below this many games,
+// classifyMotivation/drawTrapFlags fall back to neutral rather than telling
+// Claude a team is "in a relegation crisis" off a tiny sample.
+const MIN_GAMES_FOR_MOTIVATION = 6
 
 // ── Poisson ───────────────────────────────────────────────────────────────────
 function poisson(lambda: number, k: number): number {
@@ -86,6 +94,7 @@ function xg(attAvg: number, defAvg: number, leagueAvg = 1.4): number {
 
 // ── Match narrative ───────────────────────────────────────────────────────────
 function classifyMotivation(stats: TeamStats): string {
+  if ((stats.games_played ?? 0) < MIN_GAMES_FOR_MOTIVATION) return 'MID_TABLE'
   const gap = stats.gap_to_relegation
   const top4 = stats.gap_to_top4
   if (gap !== null && gap <= 6) return 'RELEGATION_FIGHT'
@@ -99,7 +108,9 @@ function classifyMotivation(stats: TeamStats): string {
 function drawTrapFlags(homeStats: TeamStats): string[] {
   const flags: string[] = []
   if ((homeStats.home_wins_last6 ?? 0) >= 4) flags.push('HOME_WON_4+_OF_LAST_6_HOME')
-  if ((homeStats.gap_to_relegation ?? 99) <= 6) flags.push('HOME_RELEGATION_DESPERATION')
+  if ((homeStats.games_played ?? 0) >= MIN_GAMES_FOR_MOTIVATION && (homeStats.gap_to_relegation ?? 99) <= 6) {
+    flags.push('HOME_RELEGATION_DESPERATION')
+  }
   if ((homeStats.home_unbeaten_streak ?? 0) >= 10) flags.push('HOME_FORTRESS_10+_UNBEATEN')
   return flags
 }
@@ -218,8 +229,9 @@ async function claudeAnalysis(payload: {
 MATCH: ${payload.home_team} vs ${payload.away_team} (${payload.league})
 
 ═══ MATCH NARRATIVE ═══
-Home (${payload.home_team}): ${payload.homeMotivation} | Pos ${h.league_position ?? '?'}, ${h.league_points ?? '?'} pts, ${h.gap_to_relegation !== null ? h.gap_to_relegation + ' pts above relegation' : 'standing unknown'}
-Away (${payload.away_team}): ${payload.awayMotivation} | Pos ${a.league_position ?? '?'}, ${a.league_points ?? '?'} pts, ${a.gap_to_relegation !== null ? a.gap_to_relegation + ' pts above relegation' : 'standing unknown'}
+Home (${payload.home_team}): ${payload.homeMotivation} | Pos ${h.league_position ?? '?'}, ${h.league_points ?? '?'} pts from ${h.games_played ?? '?'} games, ${h.gap_to_relegation !== null ? h.gap_to_relegation + ' pts above relegation' : 'standing unknown'}
+Away (${payload.away_team}): ${payload.awayMotivation} | Pos ${a.league_position ?? '?'}, ${a.league_points ?? '?'} pts from ${a.games_played ?? '?'} games, ${a.gap_to_relegation !== null ? a.gap_to_relegation + ' pts above relegation' : 'standing unknown'}
+${(h.games_played ?? 99) < MIN_GAMES_FOR_MOTIVATION || (a.games_played ?? 99) < MIN_GAMES_FOR_MOTIVATION ? `⚠️ Early season (fewer than ${MIN_GAMES_FOR_MOTIVATION} games played) — standings above are still noisy, weight recent form over table position/motivation.` : ''}
 
 ═══ DRAW TRAP SIGNALS (active = draw unlikely) ═══
 ${payload.drawFlags.length > 0 ? payload.drawFlags.join(', ') : 'None active'}
@@ -415,7 +427,7 @@ Deno.serve(async (req) => {
       home_unbeaten_streak: null, home_goals_scored_avg: null, home_goals_conceded_avg: null,
       away_wins_last6: null, away_goals_scored_avg: null, away_goals_conceded_avg: null,
       league_position: null, league_points: null, gap_to_relegation: null,
-      gap_to_top4: null, total_teams: null,
+      gap_to_top4: null, total_teams: null, games_played: null,
     }
 
     const failures: { match: string; error: string }[] = []

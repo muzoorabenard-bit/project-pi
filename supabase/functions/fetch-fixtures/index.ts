@@ -64,6 +64,7 @@ interface StandingEntry {
   gapToRelegation: number
   gapToTop4: number
   totalTeams: number
+  playedGames: number
 }
 
 async function fetchStandings(): Promise<Map<number, StandingEntry>> {
@@ -72,7 +73,7 @@ async function fetchStandings(): Promise<Map<number, StandingEntry>> {
     await delay(7000)
     try {
       const data = await fd(`competitions/${code}/standings`)
-      const table: { team: { id: number }; position: number; points: number }[] =
+      const table: { team: { id: number }; position: number; points: number; playedGames: number }[] =
         data.standings?.[0]?.table ?? []
       if (!table.length) continue
 
@@ -87,6 +88,7 @@ async function fetchStandings(): Promise<Map<number, StandingEntry>> {
           gapToRelegation: row.points - relegationCutoff,
           gapToTop4: top4Points - row.points,
           totalTeams,
+          playedGames: row.playedGames,
         })
       }
     } catch {
@@ -248,6 +250,7 @@ Deno.serve(async () => {
         gap_to_relegation: standing?.gapToRelegation ?? null,
         gap_to_top4: standing?.gapToTop4 ?? null,
         total_teams: standing?.totalTeams ?? null,
+        games_played: standing?.playedGames ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'team_id,league' })
     }
