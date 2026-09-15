@@ -284,12 +284,23 @@ INSTRUCTIONS:
 5. Clean sheet streaks reduce BTTS likelihood
 6. Smart money (low odds) often reflects informed market view
 
+REASONING STYLE (this is shown directly to ordinary betting customers on Telegram):
+- Write it like you're explaining to a 10-year-old who has never seen a stats table.
+- Use only plain, everyday words about the actual football — who's been winning, who's
+  been scoring, who's struggling, what's on the line for them.
+- NEVER mention "Poisson", "model", "algorithm", "regression", "probability", "index",
+  "signals", "data", "pressure model", or any other technical/statistical term — say
+  what it means in football terms instead (e.g. instead of "P(Over 2.5): 61%" say
+  "these two teams usually score a lot of goals together").
+- No percentages or decimal numbers in the reasoning — round things into simple phrases
+  ("almost always", "rarely", "in their last few games").
+
 Respond with ONLY valid JSON (no markdown):
 {
   "bet_type": "win" | "draw_no_bet" | "double_chance" | "btts" | "over_2.5" | "under_2.5",
   "pick": "home_win" | "away_win" | "home_dnb" | "away_dnb" | "home_or_draw" | "away_or_draw" | "btts_yes" | "btts_no" | "over_2.5" | "under_2.5",
   "confidence": "High" | "Medium" | "Low",
-  "reasoning": "3-4 sentences referencing the key signals that drove this pick."
+  "reasoning": "3-4 simple, jargon-free sentences a child could follow, about the actual football (form, goals, streaks, what's at stake) — never mentioning models, stats, or probabilities."
 }`
 
   const message = await anthropic.messages.create({
