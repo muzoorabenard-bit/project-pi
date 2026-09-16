@@ -29,6 +29,25 @@ async function notifyOps(text: string): Promise<void> {
   }
 }
 
+// Records that this function actually ran, regardless of outcome — see
+// 011_pipeline_heartbeats.sql. This is the direct fix for the exact
+// 3-month-silent-billing-stall class of failure noted below: a stale
+// heartbeat gets caught by pipeline-healthcheck the same day instead of
+// months later. Best-effort: a heartbeat write failure must never mask or
+// block the function's real work.
+async function heartbeat(ok: boolean, detail: string): Promise<void> {
+  try {
+    await supabase.from('pipeline_heartbeats').upsert({
+      function_name: 'analyze-matches',
+      last_run_at: new Date().toISOString(),
+      ok,
+      detail,
+    })
+  } catch {
+    // ignored — see comment above
+  }
+}
+
 // Credit/billing exhaustion is a real, previously-seen failure mode — it
 // silently stalled this exact function for ~3 months (2026-05-11 to
 // 2026-08-15) before anyone noticed. Flag it distinctly so it's obvious
@@ -409,6 +428,7 @@ Deno.serve(async (req) => {
 
     if (mErr) throw mErr
     if (!matches?.length) {
+      await heartbeat(true, `no fixtures for ${date}`)
       return new Response(JSON.stringify({ ok: true, message: 'No fixtures to analyze' }), {
         headers: { 'Content-Type': 'application/json' },
       })
@@ -568,12 +588,14 @@ Deno.serve(async (req) => {
       )
     }
 
+    await heartbeat(true, `analyzed ${telegramRecs.length}, ${failures.length} failed`)
     return new Response(
       JSON.stringify({ ok: true, analyzed: telegramRecs.length, failures }),
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
     const errorText = String(err)
+    await heartbeat(false, errorText)
     await notifyOps(
       `${looksLikeBillingFailure(errorText) ? '💰 Possible Anthropic credit/billing issue' : '🛑'} analyze-matches crashed entirely\n${errorText}`,
     )

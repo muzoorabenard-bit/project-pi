@@ -12,6 +12,22 @@ const AI_BET_TELEGRAM_CHAT_ID = Deno.env.get('AI_BET_TELEGRAM_CHAT_ID')
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+// Records that this function actually ran, regardless of outcome — see
+// 011_pipeline_heartbeats.sql for why. Best-effort: a heartbeat write
+// failure must never mask or block the function's real work.
+async function heartbeat(ok: boolean, detail: string): Promise<void> {
+  try {
+    await supabase.from('pipeline_heartbeats').upsert({
+      function_name: 'fetch-fixtures',
+      last_run_at: new Date().toISOString(),
+      ok,
+      detail,
+    })
+  } catch {
+    // ignored — see comment above
+  }
+}
+
 async function notifyOps(text: string): Promise<void> {
   if (!AI_BET_TELEGRAM_BOT_TOKEN || !AI_BET_TELEGRAM_CHAT_ID) return
   try {
@@ -112,6 +128,7 @@ Deno.serve(async () => {
     )
 
     if (!allFixtures.matches?.length) {
+      await heartbeat(true, 'no fixtures in next 8 days')
       return new Response(
         JSON.stringify({ ok: true, message: 'No fixtures in next 8 days' }),
         { headers: { 'Content-Type': 'application/json' } },
@@ -289,12 +306,14 @@ Deno.serve(async () => {
       body: JSON.stringify({ date: targetDate }),
     })
 
+    await heartbeat(true, `${fixtureRows.length} fixtures for ${targetDate}`)
     return new Response(
       JSON.stringify({ ok: true, date: targetDate, fixtures: fixtureRows.length }),
       { headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
     const errorText = String(err)
+    await heartbeat(false, errorText)
     await notifyOps(`🛑 fetch-fixtures crashed entirely\n${errorText}`)
     return new Response(JSON.stringify({ error: errorText }), {
       status: 500,
